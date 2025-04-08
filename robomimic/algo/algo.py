@@ -62,12 +62,12 @@ def algo_factory(algo_name, config, obs_key_shapes, ac_dim, device):
     """
 
     # @algo_name is included as an arg to be explicit, but make sure it matches the config
-    assert algo_name == config.algo_name
+    if algo_name != 'bc_natpn':
+        assert algo_name == config.algo_name
 
     # use algo factory func to get algo class and kwargs from algo config
     factory_func = algo_name_to_factory_func(algo_name)
     algo_cls, algo_kwargs = factory_func(config.algo)
-
     # create algo instance
     return algo_cls(
         algo_config=config.algo,

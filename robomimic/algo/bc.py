@@ -873,3 +873,178 @@ class BC_Transformer_GMM(BC_Transformer):
         if "policy_grad_norms" in info:
             log["Policy_Grad_Norms"] = info["policy_grad_norms"]
         return log
+
+import numpy as np
+from natpn.nn import CertaintyBudget, NaturalPosteriorNetworkModel
+from natpn.nn.encoder import  DeepImageEncoder
+from natpn.nn.flow import MaskedAutoregressiveFlow, RadialFlow
+from natpn.nn.output import MultiNormalOutput
+from natpn.nn.loss import BayesianLoss
+from robomimic.models.obs_nets import ObservationEncoder, ObservationGroupEncoder
+
+class BC_NatPN(BC):
+    """
+    BC training with a Natural Posterior Network policy. 
+    """
+    def _create_networks(self):
+        """
+        Replace the policy network with a NatPN policy network.
+        input_obs_group_shapes (OrderedDict): a dictionary of dictionaries.
+                Each key in this dictionary should specify an observation group, and
+                the value should be an OrderedDict that maps modalities to
+                expected shapes.
+        """
+
+        self.nets = nn.ModuleDict()
+        # self.obs_shapes: OrderedDict([('object', [14]), ('robot0_eef_pos', [3]), ('robot0_eef_quat', [4]), ('robot0_gripper_qpos', [2])])
+        
+        self.input_dim = sum([np.prod(v) for v in self.obs_shapes.values()])
+        print("self.input_dim",self.input_dim)
+        self.latent_dim: int = 23# NatPN Example Setting:16
+        self.dropout: float = 0.0
+        self.flow_num_layers: int = 8
+        self.entropy_weight: float = 1e-5
+        self.input_size = (3, 64, 64) # NatPN Example Setting: (3, 64, 64)s
+        self.output_size = 7 
+        
+        # Initialize flow
+        # flow = MaskedAutoregressiveFlow(self.latent_dim, num_layers=self.flow_num_layers)
+        flow = RadialFlow(self.latent_dim, num_layers=self.flow_num_layers)
+
+        # Initialize output
+        output = MultiNormalOutput(self.latent_dim, self.output_size)
+        # Initialize encoder
+        # set up different observation groups for @MIMO_MLP
+        observation_group_shapes = OrderedDict()
+        observation_group_shapes["obs"] = OrderedDict(self.obs_shapes)
+        goal_shapes =self.goal_shapes
+        self._is_goal_conditioned = False
+        if goal_shapes is not None and len(goal_shapes) > 0:
+            assert isinstance(goal_shapes, OrderedDict)
+            self._is_goal_conditioned = True
+            self.goal_shapes = OrderedDict(goal_shapes)
+            observation_group_shapes["goal"] = OrderedDict(self.goal_shapes)
+        else:
+            self.goal_shapes = OrderedDict()
+        encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder)
+        
+        self.nets["encoder"] = ObservationGroupEncoder(
+            observation_group_shapes=observation_group_shapes,
+            encoder_kwargs=encoder_kwargs,
+        )
+        
+        self.nets["policy"] = NaturalPosteriorNetworkModel(
+            latent_dim=self.latent_dim, 
+            encoder= self.nets["encoder"],
+            flow=flow,
+            output=output,
+            certainty_budget="normal",
+        )
+        self.nets = self.nets.float().to(self.device)
+
+    def _forward_training(self, batch):
+        """
+        Compute forward pass using NatPN.
+        """
+        obs= self.nets["encoder"](
+            obs=batch["obs"], 
+            goal=batch["goal_obs"],
+        )
+        # print(f"Obs shape: {obs.shape}")
+        # NatPN forward pass
+        posterior, log_prob = self.nets["policy"].forward(obs)
+        return posterior, log_prob
+
+    def _compute_losses(self, posterior, batch):
+        """
+        Compute loss using NatPN’s Bayesian loss.
+
+        Args:
+            posterior (Posterior): NatPN posterior.
+            batch (dict): Training batch.
+
+        Returns:
+            losses (dict): Computed losses.
+        """
+        a_pred = posterior
+        a_target = batch["actions"]
+
+        # Compute Bayesian loss
+        self.loss = BayesianLoss(entropy_weight=self.entropy_weight)
+        bayesian_loss = self.loss.forward(a_pred, a_target)
+        return OrderedDict(
+            action_loss=bayesian_loss,
+        )
+    
+    def _create_optimizers(self):
+        return super()._create_optimizers()
+    
+    def train_on_batch(self, batch, epoch, validate=False):
+        """
+        Training on a single batch of data.
+
+        Args:
+            batch (dict): dictionary with torch.Tensors sampled
+                from a data loader and filtered by @process_batch_for_training
+
+            epoch (int): epoch number - required by some Algos that need
+                to perform staged training and early stopping
+
+            validate (bool): if True, don't perform any learning updates.
+
+        Returns:
+            info (dict): dictionary of relevant inputs, outputs, and losses
+                that might be relevant for logging
+        """
+        with TorchUtils.maybe_no_grad(no_grad=validate):
+            info = super(BC, self).train_on_batch(batch, epoch, validate=validate)
+            predictions,log_prob = self._forward_training(batch)
+            losses = self._compute_losses(predictions, batch)
+            
+            info["losses"] = TensorUtils.detach(losses)
+
+            if not validate:
+                step_info = self._train_step(losses)
+                info.update(step_info)
+
+        return info
+
+
+    def get_action(self, obs_dict, goal_dict=None):
+        """
+        Get action from NatPN policy.
+
+        Args:
+            obs_dict (dict): Observations.
+            goal_dict (dict): (Optional) Goals.
+
+        Returns:
+            action (torch.Tensor): Sampled action.
+        """
+        assert not self.nets.training
+        batch = dict(obs=obs_dict, goal_obs=goal_dict)
+        posterior, log_prob = self._forward_training(batch)
+        predictions = {}
+        predictions["actions"] = posterior.maximum_a_posteriori().mean
+        predictions["uncertainty"] = posterior.maximum_a_posteriori().uncertainty()
+        predictions["log_prob"] = log_prob
+        # print(f"Actions:{predictions['actions']} Uncertainty:{predictions['uncertainty']} Log_prob:{predictions['log_prob']}")
+        return predictions["actions"]
+    
+    def log_info(self, info):
+        """
+        Process info dictionary from @train_on_batch to summarize
+        information to pass to tensorboard for logging.
+
+        Args:
+            info (dict): dictionary of info
+
+        Returns:
+            loss_log (dict): name -> summary statistic
+        """
+        log = PolicyAlgo.log_info(self, info)
+        # print(f"INFO:{info}")
+        # INFO:OrderedDict([('losses', OrderedDict([('action_loss', tensor(-26.3543, device='cuda:0'))])), ('policy_grad_norms', 2104791.3327994645)])
+        log["Loss"] = info["losses"]["action_loss"]
+        
+        return log

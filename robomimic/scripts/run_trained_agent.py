@@ -50,6 +50,9 @@ Example usage:
     python run_trained_agent.py --agent /path/to/model.pth \
         --n_rollouts 50 --horizon 400 --seed 0 \
         --dataset_path /path/to/output.hdf5
+
+    # Evaluate a policy with 50 rollouts of maximum horizon 400 and render the rollouts on-screen.
+    python run_trained_agent.py --agent /home/han/projects/robomimic/bc_trained_models/test_lift/lift_gmm/models/model_epoch_150_Lift_success_1.0.pth --n_rollouts 50 --horizon 400 --seed 0 --render
 """
 import argparse
 import json
