@@ -522,5 +522,21 @@ class RolloutPolicy(object):
         ob = self._prepare_observation(ob)
         if goal is not None:
             goal = self._prepare_observation(goal)
-        ac = self.policy.get_action(obs_dict=ob, goal_dict=goal)
-        return TensorUtils.to_numpy(ac[0])
+
+        # ac = self.policy.get_action(obs_dict=ob, goal_dict=goal)
+        # return TensorUtils.to_numpy(ac[0])
+
+        predictions = self.policy.get_action(obs_dict=ob, goal_dict=goal)
+        if isinstance(predictions, dict) and "actions" in predictions: # natpn action
+            ac = predictions["actions"]
+            uncertainty = predictions["uncertainty"]
+            log_prob = predictions["log_prob"]
+            pred = {
+                "actions": TensorUtils.to_numpy(ac[0]),
+                "uncertainty": TensorUtils.to_numpy(uncertainty[0]),
+                "log_prob": TensorUtils.to_numpy(log_prob),
+            }
+            return pred
+        else:
+            ac = predictions # standard robomimic action
+            return TensorUtils.to_numpy(ac[0])

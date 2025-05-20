@@ -1,8 +1,8 @@
 {
     "algo_name": "bc",
     "experiment": {
-        "name": "test",
-        "validate": false,
+        "name": "test_can",
+        "validate": true,
         "logging": {
             "terminal_output_to_txt": true,
             "log_tb": true,
@@ -18,8 +18,8 @@
             "on_best_rollout_return": false,
             "on_best_rollout_success_rate": true
         },
-        "epoch_every_n_steps": 100,
-        "validation_epoch_every_n_steps": 10,
+        "epoch_every_n_steps": 200,
+        "validation_epoch_every_n_steps": 50,
         "env": null,
         "additional_envs": null,
         "render": false,
@@ -29,7 +29,7 @@
         "rollout": {
             "enabled": true,
             "n": 50,
-            "horizon": 400,
+            "horizon": 300,
             "rate": 50,
             "warmstart": 0,
             "terminate_on_success": true
@@ -43,8 +43,8 @@
         "hdf5_use_swmr": true,
         "hdf5_load_next_obs": false,
         "hdf5_normalize_obs": false,
-        "hdf5_filter_key": null,
-        "hdf5_validation_filter_key": null,
+        "hdf5_filter_key": "train",
+        "hdf5_validation_filter_key": "valid",
         "seq_length": 1,
         "pad_seq_length": true,
         "frame_stack": 1,
@@ -57,7 +57,7 @@
         "goal_mode": null,
         "cuda": true,
         "batch_size": 100,
-        "num_epochs": 2000,
+        "num_epochs": 1000,
         "seed": 1
     },
     "algo": {

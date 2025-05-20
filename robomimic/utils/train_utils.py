@@ -219,11 +219,25 @@ def run_rollout(
     total_reward = 0.
     success = { k: False for k in env.is_success() } # success metrics
 
+    # natpn statistics
+    use_natpn = False
+    total_uncertainty = 0.
+    total_log_prob = 0.
+
     try:
         for step_i in range(horizon):
 
             # get action from policy
-            ac = policy(ob=ob_dict, goal=goal_dict)
+            # ac = policy(ob=ob_dict, goal=goal_dict)
+
+            pred = policy(ob=ob_dict, goal=goal_dict)
+            if isinstance(pred, dict): #natpn policy
+                use_natpn = True
+                ac = pred["actions"]
+                total_uncertainty += pred["uncertainty"]
+                total_log_prob += pred["log_prob"]
+            else:  # standard robomimic policy
+                ac = pred
 
             # play action
             ob_dict, r, done, _ = env.step(ac)
@@ -251,12 +265,16 @@ def run_rollout(
             if done or (terminate_on_success and success["task"]):
                 break
 
-    except env.rollout_exceptions as e:
-        print("WARNING: got rollout exception {}".format(e))
+    except env.rollout_exceptions :
+        print("WARNING: got rollout exception")
 
     results["Return"] = total_reward
     results["Horizon"] = step_i + 1
     results["Success_Rate"] = float(success["task"])
+    if use_natpn:
+        results["uncertainty"] = total_uncertainty / (step_i + 1)
+        results["log_prob"] = total_log_prob / (step_i + 1)
+
 
     # log additional success metrics
     for k in success:

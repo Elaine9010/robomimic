@@ -875,12 +875,15 @@ class BC_Transformer_GMM(BC_Transformer):
         return log
 
 import numpy as np
+import textwrap
 from natpn.nn import CertaintyBudget, NaturalPosteriorNetworkModel
 from natpn.nn.encoder import  DeepImageEncoder
 from natpn.nn.flow import MaskedAutoregressiveFlow, RadialFlow
-from natpn.nn.output import MultiNormalOutput
+from natpn.nn.output import MultiNormalOutput, NormalOutput
 from natpn.nn.loss import BayesianLoss
-from robomimic.models.obs_nets import ObservationEncoder, ObservationGroupEncoder
+from natpn.nn.encoder import TabularEncoder
+from robomimic.models.obs_nets import ObservationGroupEncoder
+
 
 class BC_NatPN(BC):
     """
@@ -896,20 +899,24 @@ class BC_NatPN(BC):
         """
 
         self.nets = nn.ModuleDict()
-        # self.obs_shapes: OrderedDict([('object', [14]), ('robot0_eef_pos', [3]), ('robot0_eef_quat', [4]), ('robot0_gripper_qpos', [2])])
         
         self.input_dim = sum([np.prod(v) for v in self.obs_shapes.values()])
-        print("self.input_dim",self.input_dim)
-        self.latent_dim: int = 23# NatPN Example Setting:16
+        self.latent_dim: int = self.input_dim
         self.dropout: float = 0.0
-        self.flow_num_layers: int = 8
         self.entropy_weight: float = 1e-5
-        self.input_size = (3, 64, 64) # NatPN Example Setting: (3, 64, 64)s
-        self.output_size = 7 
+        # self.input_size = (3, 64, 64) # NatPN Example Setting: (3, 64, 64)s
+        self.output_size = self.ac_dim
+
+        # TODO: pass flow params from config
+        self.flow_num_layers: int = 16
+        self.flow_type: str = "Radial" # "MAF" or "Radial"
         
         # Initialize flow
-        # flow = MaskedAutoregressiveFlow(self.latent_dim, num_layers=self.flow_num_layers)
-        flow = RadialFlow(self.latent_dim, num_layers=self.flow_num_layers)
+        assert self.flow_type in ["MAF", "Radial"], f"flow_type {self.flow_type} not supported"
+        if self.flow_type == "MAF":
+            flow = MaskedAutoregressiveFlow(self.latent_dim, num_layers=self.flow_num_layers)
+        elif self.flow_type == "Radial":
+            flow = RadialFlow(self.latent_dim, num_layers=self.flow_num_layers)
 
         # Initialize output
         output = MultiNormalOutput(self.latent_dim, self.output_size)
@@ -932,13 +939,19 @@ class BC_NatPN(BC):
             observation_group_shapes=observation_group_shapes,
             encoder_kwargs=encoder_kwargs,
         )
-        
+
+        # Initialize NatPN policy encoder
+        input_size = self.nets["encoder"].output_shape()
+        encoder = TabularEncoder(
+                input_size[0], [128], self.latent_dim, dropout=self.dropout
+            )
+
         self.nets["policy"] = NaturalPosteriorNetworkModel(
             latent_dim=self.latent_dim, 
-            encoder= self.nets["encoder"],
+            encoder= encoder,
             flow=flow,
             output=output,
-            certainty_budget="normal",
+            certainty_budget="exp",  # ["constant", "exp-half", "exp", "normal"]
         )
         self.nets = self.nets.float().to(self.device)
 
@@ -950,10 +963,22 @@ class BC_NatPN(BC):
             obs=batch["obs"], 
             goal=batch["goal_obs"],
         )
-        # print(f"Obs shape: {obs.shape}")
+
         # NatPN forward pass
         posterior, log_prob = self.nets["policy"].forward(obs)
         return posterior, log_prob
+    
+    def _forward_eval(self, batch):
+        """
+        Compute forward pass for policy rollout.
+        """
+        obs= self.nets["encoder"](
+            obs=batch["obs"], 
+            goal=batch["goal_obs"],
+        )
+
+        posteriors, log_prob = self.nets["policy"].forward_eval(obs)
+        return posteriors, log_prob
 
     def _compute_losses(self, posterior, batch):
         """
@@ -1023,13 +1048,13 @@ class BC_NatPN(BC):
         """
         assert not self.nets.training
         batch = dict(obs=obs_dict, goal_obs=goal_dict)
-        posterior, log_prob = self._forward_training(batch)
+
+        posterior, log_prob = self._forward_eval(batch)
         predictions = {}
         predictions["actions"] = posterior.maximum_a_posteriori().mean
         predictions["uncertainty"] = posterior.maximum_a_posteriori().uncertainty()
-        predictions["log_prob"] = log_prob
-        # print(f"Actions:{predictions['actions']} Uncertainty:{predictions['uncertainty']} Log_prob:{predictions['log_prob']}")
-        return predictions["actions"]
+        predictions["log_prob"] = log_prob[0]
+        return predictions
     
     def log_info(self, info):
         """
@@ -1048,3 +1073,13 @@ class BC_NatPN(BC):
         log["Loss"] = info["losses"]["action_loss"]
         
         return log
+    
+    def __repr__(self):
+        """Pretty print network."""
+        header = '{}'.format(str(self.__class__.__name__))
+        msg = ''
+        indent = ' ' * 4
+        msg += textwrap.indent("\nencoder={}".format(self.nets["encoder"]), indent)
+        msg += textwrap.indent("\n\nmlp={}".format(self.nets["policy"]), indent)
+        msg = header + '(' + msg + '\n)'
+        return msg

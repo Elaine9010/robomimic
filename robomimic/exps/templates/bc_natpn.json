@@ -1,7 +1,7 @@
 {
-    "algo_name": "bc",
+    "algo_name": "bc_natpn",
     "experiment": {
-        "name": "natpn_square_radial_no_warmup",
+        "name": "test_lift",
         "validate": true,
         "logging": {
             "terminal_output_to_txt": true,
@@ -18,8 +18,8 @@
             "on_best_rollout_return": false,
             "on_best_rollout_success_rate": true
         },
-        "epoch_every_n_steps": 100,
-        "validation_epoch_every_n_steps": 10,
+        "epoch_every_n_steps": 300,
+        "validation_epoch_every_n_steps": 50,
         "env": null,
         "additional_envs": null,
         "render": false,
@@ -189,7 +189,21 @@
             },
             "rgb": {
                 "core_class": "VisualCore",
-                "core_kwargs": {},
+                "core_kwargs": {
+                    "feature_dimension": 64,
+                    "backbone_class": "ResNet18Conv",
+                    "backbone_kwargs": {
+                        "pretrained": false,
+                        "input_coord_conv": false
+                    },
+                    "pool_class": "SpatialSoftmax",
+                    "pool_kwargs": {
+                        "num_kp": 32,
+                        "learnable_temperature": false,
+                        "temperature": 1.0,
+                        "noise_std": 0.0
+                    }
+                },
                 "obs_randomizer_class": null,
                 "obs_randomizer_kwargs": {}
             },

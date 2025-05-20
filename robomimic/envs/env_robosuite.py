@@ -31,7 +31,7 @@ import robomimic.envs.env_base as EB
 # protect against missing mujoco-py module, since robosuite might be using mujoco-py or DM backend
 try:
     import mujoco_py
-    MUJOCO_EXCEPTIONS = [mujoco_py.builder.MujocoException]
+    # MUJOCO_EXCEPTIONS = [mujoco_py.builder.MujocoException]
 except ImportError:
     MUJOCO_EXCEPTIONS = []
 
@@ -542,7 +542,7 @@ class EnvRobosuite(EB.EnvBase):
         that the entire training run doesn't crash because of a bad policy that causes unstable
         simulation computations.
         """
-        return tuple(MUJOCO_EXCEPTIONS)
+        return None
 
     @property
     def base_env(self):

@@ -111,7 +111,7 @@ class EnvGym(EB.EnvBase):
         if mode =="human":
             return self.env.render(mode=mode, **kwargs)
         if mode == "rgb_array":
-            return self.env.render(mode="rgb_array", height=height, width=width)
+            return self.env.render(mode="rgb_array")#, height=height, width=width)
         else:
             raise NotImplementedError("mode={} is not implemented".format(mode))
 

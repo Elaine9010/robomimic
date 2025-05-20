@@ -26,7 +26,9 @@ def config_factory(algo_name, dic=None):
     Creates an instance of a config from the algo name. Optionally pass
     a dictionary to instantiate the config from the dictionary.
     """
-    if algo_name not in REGISTERED_CONFIGS:
+    if algo_name == "bc_natpn": # TODO:register new bc_natpn config
+        algo_name = "bc"
+    elif algo_name not in REGISTERED_CONFIGS:
         raise Exception("Config for algo name {} not found. Make sure it is a registered config among: {}".format(
             algo_name, ', '.join(REGISTERED_CONFIGS)))
     return REGISTERED_CONFIGS[algo_name](dict_to_load=dic)

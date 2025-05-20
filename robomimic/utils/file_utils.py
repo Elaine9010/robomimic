@@ -22,6 +22,7 @@ import robomimic.utils.torch_utils as TorchUtils
 from robomimic.config import config_factory
 from robomimic.algo import algo_factory
 from robomimic.algo import RolloutPolicy
+from robomimic.algo.bc import BC_NatPN
 
 
 def create_hdf5_filter_key(hdf5_path, demo_keys, key_name):
@@ -403,14 +404,26 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
         # get torch device
         device = TorchUtils.get_torch_device(try_to_use_cuda=config.train.cuda)
 
-    # create model and load weights
-    model = algo_factory(
-        algo_name,
-        config,
-        obs_key_shapes=shape_meta["all_shapes"],
-        ac_dim=shape_meta["ac_dim"],
-        device=device,
-    )
+    if algo_name == "bc_natpn":
+        # create BC natpn model
+        model = BC_NatPN(
+                algo_config=config.algo,
+                obs_config=config.observation,
+                global_config=config,
+                obs_key_shapes=shape_meta["all_shapes"],
+                ac_dim=shape_meta["ac_dim"],
+                device=device,
+            )
+    else:
+        # create standard model and load weights
+        model = algo_factory(
+            algo_name,
+            config,
+            obs_key_shapes=shape_meta["all_shapes"],
+            ac_dim=shape_meta["ac_dim"],
+            device=device,
+        )
+    # deserialize model weights
     model.deserialize(ckpt_dict["model"])
     model.set_eval()
     model = RolloutPolicy(model, obs_normalization_stats=obs_normalization_stats)
@@ -418,6 +431,49 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
         print("============= Loaded Policy =============")
         print(model)
     return model, ckpt_dict
+
+def model_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=False):
+    """
+    This function restores a trained BC_NatPN model from a checkpoint file or
+    loaded model dictionary.
+    """
+    ckpt_dict = maybe_dict_from_checkpoint(ckpt_path=ckpt_path, ckpt_dict=ckpt_dict)
+
+    # algo name and config from model dict
+    algo_name, _ = algo_name_from_checkpoint(ckpt_dict=ckpt_dict)
+    config, _ = config_from_checkpoint(algo_name=algo_name, ckpt_dict=ckpt_dict, verbose=verbose)
+
+    # read config to set up metadata for observation modalities (e.g. detecting rgb observations)
+    ObsUtils.initialize_obs_utils_with_config(config)
+
+    # shape meta from model dict to get info needed to create model
+    shape_meta = ckpt_dict["shape_metadata"]
+
+    # maybe restore observation normalization stats
+    obs_normalization_stats = ckpt_dict.get("obs_normalization_stats", None)
+    if obs_normalization_stats is not None:
+        assert config.train.hdf5_normalize_obs
+        for m in obs_normalization_stats:
+            for k in obs_normalization_stats[m]:
+                obs_normalization_stats[m][k] = np.array(obs_normalization_stats[m][k])
+
+    if device is None:
+        # get torch device
+        device = TorchUtils.get_torch_device(try_to_use_cuda=config.train.cuda)
+
+    model = BC_NatPN(
+            algo_config=config.algo,
+            obs_config=config.observation,
+            global_config=config,
+            obs_key_shapes=shape_meta["all_shapes"],
+            ac_dim=shape_meta["ac_dim"],
+            device=device,
+        )
+    
+    model.deserialize(ckpt_dict["model"])
+    model.set_eval()
+    
+    return model
 
 
 def env_from_checkpoint(ckpt_path=None, ckpt_dict=None, env_name=None, render=False, render_offscreen=False, verbose=False):

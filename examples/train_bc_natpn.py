@@ -191,6 +191,7 @@ def run_epoch(model, data_loader,validation,grad_steps):
             batch = next(data_loader_iter)
         except StopIteration:
             # data loader ran out of batches - reset and yield first batch
+            # print("Data loader ran out of batches - resetting")
             data_loader_iter = iter(data_loader)
             batch = next(data_loader_iter)
 
@@ -237,12 +238,15 @@ def warmup_flow(model, data_loader, device, warmup_epochs=3):
                 # process batch for training
             input_batch = model.process_batch_for_training(batch)
             input_batch = model.postprocess_batch_for_training(input_batch, obs_normalization_stats=None)
+         
             obs = model.nets["encoder"](
                 obs=input_batch["obs"],
                 goal = input_batch.get("goal_obs", None),
             )
-            with torch.no_grad():  # freeze encoder
-                z = obs.detach().float()
+            z = encoder(obs)
+            # with torch.no_grad():  # freeze encoder
+            #     z = obs.detach().float()
+            
             log_prob = flow(z)
             loss = -log_prob.mean()
 
@@ -310,10 +314,9 @@ def run_rollout(config, env_meta, shape_meta,rollout_model, envs, epoch):
 if __name__ == "__main__":
 
     # set up paths and parameters
-    task_name = "square"
+    task_name = "lift"
     warmup_epochs = None
-    
-    loss_save_path = "/home/han/projects/robomimic/bc_trained_models/losses"
+
     config_path = "/home/han/projects/robomimic/robomimic/exps/templates/bc_natpn.json"
     dataset_path = f"/home/han/projects/robomimic/datasets/{task_name}/ph/low_dim_v141.hdf5"
 
@@ -348,9 +351,15 @@ if __name__ == "__main__":
     device = TorchUtils.get_torch_device(try_to_use_cuda=True)
     # get dataset loader
     train_data_loader, val_data_loader = get_data_loader(dataset_path=dataset_path)
+    num_batches = len(train_data_loader)
+    print(f"Number of batches: {num_batches}")
+
 
     # create model
     model = get_example_model(config = config, dataset_path=dataset_path, device=device, use_natpn=True)
+    print("\n============= Model Summary =============")
+    print(model)  # print model summary
+    print("")
 
     # create environment
     
@@ -391,10 +400,10 @@ if __name__ == "__main__":
 
         # run evaluation every n epochs
         if config.experiment.validate and epoch % validation_every_n_epochs == 0:
-            steo_log = run_epoch(model=model, data_loader=val_data_loader,validation=True,grad_steps=grad_steps)
-            val_losses.append(step_log["Loss"])
+            val_step_log = run_epoch(model=model, data_loader=val_data_loader,validation=True,grad_steps=grad_steps)
+            val_losses.append(val_step_log["Loss"])
             val_epochs.append(epoch)
-            print("Validation Loss {}".format(step_log["Loss"]))
+            print("Validation Loss {}".format(val_step_log["Loss"]))
 
         # run rollouts every n epochs
         if config.experiment.rollout.enabled and epoch % rollout_every_n_epochs == 0:
@@ -440,7 +449,7 @@ if __name__ == "__main__":
                     ckpt_path=os.path.join(ckpt_dir, epoch_ckpt_name + ".pth"),
                     obs_normalization_stats=None,
                 )
-            
+
 
     # plot training and validation losses
     epochs = list(range(1, num_epochs + 1))
